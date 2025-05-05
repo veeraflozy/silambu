@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://apis.google.com/js/platform.js" async defer></script>
+    <title>CSK 25 - Camera</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            height: 100%;
+            font-family: sans-serif;
+            color: white;
+        }
+
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            z-index: 2;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid white;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 28px;
+            cursor: pointer;
+            transition: transform 0.2s ease, background 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.1);
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .btn.pulsing {
+            animation: pulse 1s infinite;
+            border-color: red;
+            color: red;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.6);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(255, 0, 0, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 0, 0, 0);
+            }
+        }
+
+        .top-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 2;
+        }
+
+        .top-bar .btn {
+            width: 40px;
+            height: 40px;
+            font-size: 24px;
+        }
+
+        .countdown {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 72px;
+            font-weight: bold;
+            color: white;
+            z-index: 3;
+            display: none;
+        }
+
+        .flash-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: white;
+            opacity: 0;
+            z-index: 10;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .flash-overlay.active {
+            opacity: 0.8;
+        }
+
+        .recording .record-btn {
+            background: red;
+            border-color: darkred;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7);
+            }
+
+            70% {
+                box-shadow: 0 0 0 15px rgba(255, 0, 0, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 0, 0, 0);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <video id="camera" autoplay playsinline muted></video>
+
+    <!-- Countdown Display -->
+    <div id="countdown" class="countdown">3</div>
+
+    <!-- Top bar with close, switch camera, flash toggle -->
+    <div class="top-bar">
+        <div class="btn" onclick="closeCamera()" title="Close">
+            <span class="material-icons">close</span>
+        </div>
+        <div class="btn" onclick="switchCamera()" title="Switch Camera">
+            <span class="material-icons">flip_camera_android</span>
+        </div>
+        <!-- <div class="btn" onclick="toggleFlash()" title="Toggle Flash">
+            <span id="flashIcon" class="material-icons">flash_off</span>
+        </div> -->
+    </div>
+
+    <!-- Bottom controls -->
+    <div class="controls">
+        <div class="btn" onclick="takePhoto()" title="Take Photo">
+            <span class="material-icons">photo_camera</span>
+        </div>
+        <div class="btn" id="recordBtn" onclick="toggleRecording()" title="Start Recording">
+            <span class="material-icons">fiber_manual_record</span>
+        </div>
+        <!-- <div class="btn" onclick="toggleRecording()" title="Stop Recording">
+            <span class="material-icons">stop</span>
+        </div> -->
+    </div>
+    <div id="flash" class="flash-overlay"></div>
+
+    <script>
+
+        let GoogleAuth;
+        let accessToken = localStorage.getItem("accessToken")
+        let loadingData = []
+        const camera = document.getElementById('camera');
+        const recordBtn = document.getElementById('recordBtn');
+        const countdownEl = document.getElementById('countdown');
+        const flashIcon = document.getElementById('flashIcon');
+
+        let mediaStream;
+        let mediaRecorder;
+        let recordedChunks = [];
+        let currentFacing = "environment";
+        let flashOn = false;
+        let isRecording = false;
+
+        function closeCamera() {
+            if (loadingData.length === 0) {
+                window.location.href = 'list.html'
+            } else {
+                alert('Uploading... Please wait')
+            }
+        }
+
+        async function startCamera() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        facingMode: currentFacing
+                    },
+                    audio: true
+                });
+                camera.srcObject = mediaStream;
+                // Try to enable continuous autofocus if supported
+                const [track] = mediaStream.getVideoTracks();
+                const capabilities = track.getCapabilities();
+
+                if (capabilities.focusMode && capabilities.focusMode.includes("continuous")) {
+                    await track.applyConstraints({
+                        advanced: [{ focusMode: "continuous" }]
+                    });
+                    console.log("Continuous autofocus applied");
+                }
+                camera.play();
+                // applyFlashSetting();
+            } catch (err) {
+                alert("Camera access error: " + err.message);
+            }
+        }
+
+        function switchCamera() {
+            currentFacing = currentFacing === "environment" ? "user" : "environment";
+            startCamera();
+        }
+
+        function applyFlashSetting() {
+            const track = mediaStream.getVideoTracks()[0];
+            const capabilities = track.getCapabilities();
+            if (capabilities.torch) {
+                track.applyConstraints({ advanced: [{ torch: flashOn }] });
+            } else {
+                flashIcon.style.opacity = 0.3;
+            }
+        }
+
+        function toggleFlash() {
+            flashOn = !flashOn;
+            flashIcon.textContent = flashOn ? "flash_on" : "flash_off";
+            applyFlashSetting();
+        }
+        function blinkFlash() {
+            const flash = document.getElementById("flash");
+            flash.classList.add("active");
+            setTimeout(() => flash.classList.remove("active"), 150);
+        }
+
+        function takePhoto() {
+            const canvas = document.createElement("canvas");
+            canvas.width = camera.videoWidth;
+            canvas.height = camera.videoHeight;
+            canvas.getContext("2d").drawImage(camera, 0, 0);
+            canvas.toBlob(blob => {
+                blinkFlash();
+                loadingData.push(1)
+                uploadToDrive(blob, `${Date.now()}.jpeg`)
+                // Upload or save the blob as needed
+            }, "image/jpeg");
+        }
+
+        function startPhotoTimer() {
+            let count = 3;
+            countdownEl.textContent = count;
+            countdownEl.style.display = "block";
+
+            const interval = setInterval(() => {
+                count--;
+                countdownEl.textContent = count;
+                if (count === 0) {
+                    clearInterval(interval);
+                    countdownEl.style.display = "none";
+                    takePhoto();
+                }
+            }, 1000);
+        }
+
+        function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+
+        function startRecording() {
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(mediaStream);
+            mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+            mediaRecorder.start();
+            isRecording = true;
+            recordBtn.classList.add("pulsing");
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    // Upload or save the blob as needed
+                    loadingData.push(1)
+                    uploadToDrive(blob, `${Date.now()}.webm`)
+
+                };
+                mediaRecorder.stop();
+                isRecording = false;
+                recordBtn.classList.remove("pulsing");
+                blinkFlash();
+            }
+        }
+
+        async function uploadToDrive(file, fileName) {
+            return new Promise(async (resolve, reject) => {
+                if (!accessToken) {
+                    console.log("Please sign in to Google.");
+                    alert('Please sign in to Google.')
+                    window.location.href = 'index.html'
+                    return;
+                }
+
+                const metadata = {
+                    name: fileName, // File name
+                    mimeType: file.type, // MIME type
+                    parents: [localStorage.getItem('folder_id')] // Public folder ID
+                };
+
+                const formData = new FormData();
+                formData.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+                formData.append("file", file);
+
+                const request = new Request("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+                    method: "POST",
+                    headers: new Headers({ "Authorization": "Bearer " + accessToken }),
+                    body: formData
+                });
+
+                const response = await fetch(request);
+                const data = await response.json();
+
+                if (response.ok) {
+                    console.log("File uploaded successfully:", data);
+                    makePublic(data.id); // Make the file public
+                    resolve(data); // Upload successful
+                } else {
+                    loadingData.pop()
+                    console.error("Error uploading file:", data);
+                    resolve(false); // Upload failed
+                }
+            })
+        }
+
+        // Make the file public (set permissions)
+        async function makePublic(fileId) {
+            const permissions = {
+                role: "reader",
+                type: "anyone"
+            };
+
+            const request = new Request(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+                method: "POST",
+                headers: new Headers({ "Authorization": "Bearer " + accessToken }),
+                body: JSON.stringify(permissions)
+            });
+
+            const response = await fetch(request);
+            const data = await response.json();
+
+            if (response.ok) {
+                console.log("File is now public:", data);
+            } else {
+                console.error("Error making file public:", data);
+            }
+            loadingData.pop();
+        }
+
+        startCamera();
+    </script>
+</body>
+
+</html>
+<script src="https://apis.google.com/js/client.js?onload=handleClientLoad"></script>
